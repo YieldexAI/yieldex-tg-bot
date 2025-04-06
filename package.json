@@ -1,0 +1,19 @@
+{
+  "name": "apy-telegram-bot",
+  "version": "1.0.0",
+  "description": "Telegram Bot for APY tracking from Supabase",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.38.4",
+    "dotenv": "^16.3.1",
+    "node-cron": "^3.0.2",
+    "node-telegram-bot-api": "^0.64.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+} 
