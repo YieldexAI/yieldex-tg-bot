@@ -193,15 +193,9 @@ async def _fetch_top_apy():
 
 async def get_top_apy():
     """Get top-1 APY from cached data"""
-    # Для отладки: печатаем ID экземпляра модуля
-    print(f"[DEBUG] get_top_apy called from module instance {id(sys.modules[__name__])}")
-    
     # Используем только кэш для максимальной скорости
     cached_data = top_apy_cache.get()
     if cached_data is not None:
-        # Для диагностики
-        cache_age = time.time() - top_apy_cache.timestamp
-        print(f"[CACHE] Using cached top APY ({cache_age:.2f}s old): {cached_data.get('asset')} with APY={cached_data.get('apy')}")
         return cached_data
     
     # Если в кэше нет данных, вычисляем из основного кэша
@@ -219,7 +213,6 @@ async def get_top_apy():
         top_apy_cache.data = result
         top_apy_cache.timestamp = time.time()
         
-        print(f"[CACHE] Calculated top APY from full data: {result.get('asset')} with APY={result.get('apy')}")
         return result
     
     # Если нет никаких данных в кэше, делаем запрос к БД
@@ -695,18 +688,12 @@ async def get_top_apy_for_chain(chain_name):
     if not data:
         return []
     
-    # Отладочное логирование
-    all_chains = set(item.get('chain') for item in data if item.get('chain'))
-    print(f"[CHAIN] Looking for chain '{chain_name}' among available chains: {all_chains}")
-    
     # Сначала пробуем точное регистро-независимое совпадение БЕЗ фильтра по TVL
     filtered_data = [item for item in data if item.get('chain') and 
                     item.get('chain').lower() == chain_name.lower()]
     
     # Если точных совпадений нет, пробуем частичное совпадение
     if not filtered_data:
-        print(f"[CHAIN] No exact match for chain '{chain_name}', trying partial match")
-        
         # Пробуем найти цепь как подстроку (с удалением подчеркиваний для унификации)
         filtered_data = [item for item in data if item.get('chain') and 
                      (chain_name.lower().replace('_', '') in item.get('chain').lower().replace('_', '') or
@@ -716,11 +703,6 @@ async def get_top_apy_for_chain(chain_name):
     sorted_data = sorted(filtered_data, key=lambda x: x.get('apy', 0), reverse=True)
     
     # Возвращаем только 3 лучших пула
-    if sorted_data:
-        print(f"[CHAIN] Found {len(sorted_data)} pools for chain '{chain_name}'")
-    else:
-        print(f"[CHAIN] No pools found for chain '{chain_name}' after matching")
-    
     return sorted_data[:3]
 
 async def pre_calculate_all_caches():

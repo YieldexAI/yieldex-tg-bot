@@ -186,7 +186,7 @@ async def create_paginated_chains_keyboard(page=0, items_per_page=12):
     
     # Calculate chains for the current page
     start_index = page * items_per_page
-    end_index = min(start_index + items_page, len(chains))
+    end_index = min(start_index + items_per_page, len(chains))
     page_chains = chains[start_index:end_index]
     
     # Format keyboard: 3 chains per row
@@ -793,24 +793,19 @@ async def handle_callback_query(callback_query):
         await log_bot_action(f"chain_{chain}", user_id, username)
         
         try:
-            # Получаем данные для выбранной цепи
             top_apys = await database.get_top_apy_for_chain(chain)
             
             if top_apys:
-                # Унифицируем обработку всех цепей
                 message = f"✨ TOP OPPORTUNITIES ON {chain.upper()} ✨\n\n"
                 
                 for i, item in enumerate(top_apys):
                     try:
-                        print(f"[DEBUG] Formatting pool {i+1} for {chain}: asset={item.get('asset')}, apy={item.get('apy')}")
-                        # Используем единую функцию форматирования для всех пулов
                         pool_text = format_top_apy_data(item, i + 1)
                         message += pool_text
                         if i < len(top_apys) - 1:
                             message += "\n\n"
                     except Exception as e:
-                        print(f"[DEBUG] Error formatting pool {i+1}: {e}")
-                        # Если не получилось отформатировать, добавляем базовую информацию
+                        print(f"Error formatting pool {i+1}: {e}")
                         message += f"Pool {i+1}: {item.get('asset')} with APY {item.get('apy', 'N/A')}%\n"
                 
                 # Add back button
@@ -830,10 +825,8 @@ async def handle_callback_query(callback_query):
                         "reply_markup": back_keyboard,
                         "disable_web_page_preview": True
                     })
-                    print(f"[DEBUG] Successfully sent message for chain '{chain}'")
                 except Exception as e:
-                    print(f"[DEBUG] Error sending message: {e}")
-                    # Пробуем отправить без Markdown
+                    print(f"Error sending message: {e}")
                     await send_telegram_request_async("editMessageText", {
                         "chat_id": chat_id,
                         "message_id": message_id,
@@ -841,7 +834,6 @@ async def handle_callback_query(callback_query):
                         "reply_markup": back_keyboard
                     })
             else:
-                # Если нет данных для любой цепи
                 await send_telegram_request_async("editMessageText", {
                     "chat_id": chat_id,
                     "message_id": message_id,
@@ -854,8 +846,7 @@ async def handle_callback_query(callback_query):
                     }
                 })
         except Exception as e:
-            print(f"[DEBUG] Unexpected error processing chain '{chain}': {e}")
-            # Обработка ошибок...
+            print(f"Error processing chain '{chain}': {e}")
         
         await send_telegram_request_async("answerCallbackQuery", {
             "callback_query_id": query_id
@@ -867,10 +858,8 @@ async def handle_callback_query(callback_query):
         "callback_query_id": query_id
     })
 
-# Обновленная функция отправки уведомлений
 async def send_daily_notification():
     """Send daily notification to all subscribed users"""
-    # Добавляем global в начало функции
     global _formatted_data_cache
     
     timestamp = datetime.datetime.now().isoformat()
@@ -885,41 +874,33 @@ async def send_daily_notification():
         else:
             print(f"[{timestamp}] ⚠️ Cache refresh failed, using existing data")
         
-        # Гарантированно очищаем кэш отформатированных сообщений
         _formatted_data_cache.clear()
         
-        # Получаем топовый пул с актуальными данными
         top_apy = await database.get_top_apy()
         
         if not top_apy:
             print(f"[{timestamp}] ❌ Failed to retrieve top APY data, aborting notification")
             return
         
-        # Получаем всех подписчиков (без проверки TEST_NOTIFICATION)
         subscribers = await database.get_subscribed_users()
         print(f"[{timestamp}] 📋 Found {len(subscribers)} subscribers")
         
-        # Клавиатура для уведомления
         menu_keyboard = {
             "inline_keyboard": [
                 [{"text": "Open Main Menu", "callback_data": "show_menu"}]
             ]
         }
         
-        # Форматируем дату
         today = datetime.datetime.now()
         formatted_date = today.strftime("%d/%m/%y")
         
-        # Форматируем сообщение
         message = f"💰TOP STABLECOIN POOL {formatted_date}\n\n"
         message += format_top_apy_data(top_apy, 1)
         message += "\n\n_Only the pools with more than $1M TVL are shown_"
         
-        # Счетчики для логирования
         sent_count = 0
         error_count = 0
         
-        # Отправляем уведомления всем подписчикам
         for user in subscribers:
             user_id = user.get('telegram_id')
             print(f"[{timestamp}] 📤 Sending notification to user {user_id}")
@@ -940,7 +921,6 @@ async def send_daily_notification():
                 else:
                     print(f"[{timestamp}] ⚠️ Failed to send notification to user {user_id}: {result}")
                     
-                    # Пробуем отправить с числовым ID
                     try:
                         numeric_id = int(user_id)
                         result = await send_telegram_request_async("sendMessage", {
