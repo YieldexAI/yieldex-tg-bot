@@ -12,6 +12,60 @@ import sys
 # В начале database.py добавим отладочный код для отслеживания экземпляров
 print(f"Loading database.py with id: {id(sys.modules['__main__'] if '__main__' in sys.modules else 0)}")
 
+# Функция для повторного выполнения запросов к базе данных с экспоненциальной задержкой
+async def retry_db_operation(operation_func, max_retries=5, base_delay=1):
+    """
+    Retry a database operation with exponential backoff
+    
+    Args:
+        operation_func: Async function to retry
+        max_retries: Maximum number of retry attempts
+        base_delay: Base delay in seconds between retries (will be multiplied by 2^attempt)
+        
+    Returns:
+        The result of the operation or None if all retries failed
+    """
+    attempt = 0
+    last_error = None
+    
+    while attempt < max_retries:
+        try:
+            # Увеличиваем счетчик попыток
+            attempt += 1
+            
+            # Если это повторная попытка, логируем это
+            if attempt > 1:
+                print(f"[RETRY] Attempt {attempt}/{max_retries} for database operation")
+            
+            # Выполняем операцию
+            result = await operation_func()
+            
+            # Если успешно, возвращаем результат
+            if result is not None:
+                if attempt > 1:
+                    print(f"[RETRY] Operation succeeded on attempt {attempt}")
+                return result
+                
+            # Если результат None но без исключения, считаем это ошибкой и повторяем
+            print(f"[RETRY] Operation returned None on attempt {attempt}, retrying...")
+            
+        except Exception as e:
+            last_error = e
+            print(f"[RETRY] Error on attempt {attempt}/{max_retries}: {e}")
+        
+        # Если это была последняя попытка, выходим с ошибкой
+        if attempt >= max_retries:
+            print(f"[RETRY] All {max_retries} attempts failed. Last error: {last_error}")
+            break
+            
+        # Экспоненциальная задержка с небольшим случайным компонентом для предотвращения одновременных запросов
+        delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 1)
+        print(f"[RETRY] Waiting {delay:.2f} seconds before next attempt")
+        await asyncio.sleep(delay)
+    
+    # Если все попытки неудачны, возвращаем None
+    return None
+
 # Глобальные кэши
 _formatted_data_cache = {}  # Кэш для хранения форматированных сообщений
 
@@ -115,33 +169,43 @@ def has_error(response):
 
 async def _fetch_latest_full_apy():
     """Внутренняя функция для получения полных данных APY из базы данных"""
-    try:
-        # Вызываем созданную RPC функцию с пустым словарем параметров
-        response = supabase.rpc('get_latest_apy_data', {}).execute()
-        
-        if has_error(response):
-            print(f"Error calling get_latest_apy_data: {response.error}")
+    # Определяем внутреннюю функцию для запроса к базе данных
+    async def fetch_operation():
+        try:
+            # Вызываем созданную RPC функцию с пустым словарем параметров
+            response = supabase.rpc('get_latest_apy_data', {}).execute()
+            
+            if has_error(response):
+                print(f"Error calling get_latest_apy_data: {response.error}")
+                return None
+            
+            result = response.data if response.data else []
+            
+            # Постобработка: извлекаем project из pool_id
+            for item in result:
+                if 'pool_id' in item and item['pool_id']:
+                    parts = item['pool_id'].split('_')
+                    if len(parts) >= 3:
+                        item['project'] = '_'.join(parts[2:])
+                    else:
+                        item['project'] = parts[0] if parts else ''
+            
+            return result
+        except Exception as e:
+            print(f"Error in fetch operation: {e}")
             return None
-        
-        result = response.data if response.data else []
-        
-        # Постобработка: извлекаем project из pool_id
-        for item in result:
-            if 'pool_id' in item and item['pool_id']:
-                parts = item['pool_id'].split('_')
-                if len(parts) >= 3:
-                    item['project'] = '_'.join(parts[2:])
-                else:
-                    item['project'] = parts[0] if parts else ''
-        
-        return result
-    except Exception as e:
-        print(f"Error in _fetch_latest_full_apy: {e}")
-        # В случае ошибки возвращаем предыдущий кэш, если он есть
+    
+    # Используем механизм повторного запроса
+    result = await retry_db_operation(fetch_operation)
+    
+    # Если после всех попыток результат не получен, пробуем использовать кэш
+    if result is None:
+        print(f"All retry attempts failed, checking if existing cache is available")
         if full_apy_cache.get() is not None:
             print(f"Using existing cache ({len(full_apy_cache.get())} records) due to error")
             return full_apy_cache.get()
-        return None
+    
+    return result
 
 async def get_latest_full_apy(skip_cache=False):
     """Get latest APY data from database or cache"""
@@ -157,10 +221,10 @@ async def get_latest_full_apy(skip_cache=False):
     try:
         print("[CACHE MISS] get_latest_full_apy - fetching from database")
         
-        # Используем правильную RPC-функцию вместо прямого обращения к таблице
+        # Используем функцию с механизмом повторения запросов
         data = await _fetch_latest_full_apy()
         
-        # Обновляем кэш, если не запрошен пропуск кэша
+        # Обновляем кэш, если не запрошен пропуск кэша и данные получены
         if data is not None and not skip_cache:
             full_apy_cache.data = data
             full_apy_cache.timestamp = time.time()
@@ -385,7 +449,7 @@ async def update_all_caches():
     try:
         start_time = time.time()
         
-        # Получаем свежие данные из базы
+        # Получаем свежие данные из базы (с возможностью повторения запроса)
         print(f"[{timestamp}] [CACHE] Fetching fresh data directly from database")
         fresh_data = await _fetch_latest_full_apy()
         
@@ -769,7 +833,7 @@ async def force_refresh_all_caches():
                 return False
             _cache_updating = True
         
-        # Получаем свежие данные напрямую из БД
+        # Получаем свежие данные напрямую из БД с механизмом повторных попыток
         print("[FORCE REFRESH] Calling database for fresh data")
         fresh_data = await _fetch_latest_full_apy()
         
